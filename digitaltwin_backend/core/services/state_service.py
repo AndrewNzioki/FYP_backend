@@ -14,6 +14,8 @@ from django.db import transaction
 from core.faults import detect_fault
 from core.models import FaultLog, SystemState, TelemetryLog
 from core.utils import get_config_value
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +177,27 @@ def persist_telemetry(topic: str, payload: dict[str, Any]) -> bool:
                         snapshot=snapshot,
                     )
                     logger.warning("Fault detected from telemetry topic=%s fault=%s", topic, reason)
+
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    "telemetry_updates",  # This matches the group_name in your consumer
+                    {
+                        "type": "send_telemetry",  # This tells Channels which method to call
+                        "data": {
+                            "mode": state.mode,
+                            "tank1_level": state.tank1_level,
+                            "tank2_level": state.tank2_level,
+                            "source_level": state.source_level,
+                            "pump_actual": state.pump_actual,
+                            "valve1_actual": state.valve1_actual,
+                            "valve2_actual": state.valve2_actual,
+                            "cloud_connection_status": state.cloud_connection_status,
+                            "emergency_stop": state.emergency_stop,
+                            "fault_status": reason if fault else "OK",
+                        }
+                    }
+                )
 
             return True
     except Exception:

@@ -7,11 +7,6 @@ from core.models import Command, FaultLog, SystemConfig, SystemState, TelemetryL
 from core.state_machine import evaluate_transition
 
 
-def _publish_mqtt_command(_command: Command) -> bool:
-    # MQTT publish is intentionally left as a stub for now.
-    return False
-
-
 def _create_and_validate_command(command_type: str, payload: dict, issued_by: str):
     issued_by = (issued_by or "USER").upper()
 
@@ -55,19 +50,20 @@ def _create_and_validate_command(command_type: str, payload: dict, issued_by: st
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Transition is allowed. Approve it and leave it for the MQTT worker.
         command.status = "APPROVED"
         command.reason = transition.reason
         command.save(update_fields=["status", "reason"])
 
-    mqtt_published = _publish_mqtt_command(command)
+    # DELETED: mqtt_published = _publish_mqtt_command(command)
+
     return command, Response(
         {
             "status": "approved",
             "command_id": command.id,
             "reason": command.reason,
             "next_state": transition.next_state,
-            "mqtt_published": mqtt_published,
-            "mqtt_note": "MQTT publish not implemented yet",
+            "dispatch_status": "QUEUED_FOR_EDGE", # Be honest with the UI
         },
         status=status.HTTP_201_CREATED,
     )
