@@ -36,6 +36,7 @@ ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -43,7 +44,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    'core'
+    'core',
 ]
 
 MIDDLEWARE = [
@@ -75,6 +76,18 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'digitaltwin_backend.wsgi.application'
+
+# ASGI Setup
+ASGI_APPLICATION = 'digitaltwin_backend.asgi.application'
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [(os.getenv('REDIS_HOST', '127.0.0.1'), int(os.getenv('REDIS_PORT', 6379)))],
+        },
+    },
+}
 
 
 # Database
@@ -204,6 +217,31 @@ MQTT_BROKER_HOST = os.getenv('MQTT_BROKER_HOST', 'localhost')
 MQTT_BROKER_PORT = int(os.getenv('MQTT_BROKER_PORT', '1883'))
 MQTT_USERNAME = os.getenv('MQTT_USERNAME', '')
 MQTT_PASSWORD = os.getenv('MQTT_PASSWORD', '')
+MQTT_CLIENT_ID = os.getenv('MQTT_CLIENT_ID', 'digitaltwin-backend-worker')
+MQTT_KEEPALIVE = int(os.getenv('MQTT_KEEPALIVE', '60'))
+MQTT_CLEAN_SESSION = os.getenv('MQTT_CLEAN_SESSION', 'False') == 'True'
+MQTT_TRANSPORT = os.getenv('MQTT_TRANSPORT', 'tcp')
+
+MQTT_TELEMETRY_STATE_TOPIC = os.getenv('MQTT_TELEMETRY_STATE_TOPIC', 'plant/telemetry/state')
+MQTT_TELEMETRY_HEALTH_TOPIC = os.getenv('MQTT_TELEMETRY_HEALTH_TOPIC', 'plant/telemetry/health')
+MQTT_COMMAND_TOPIC = os.getenv('MQTT_COMMAND_TOPIC', 'plant/command/set_mode')
+
+MQTT_TELEMETRY_QOS = int(os.getenv('MQTT_TELEMETRY_QOS', '1'))
+MQTT_COMMAND_QOS = int(os.getenv('MQTT_COMMAND_QOS', '2'))
+
+MQTT_COMMAND_POLL_INTERVAL_SECONDS = float(os.getenv('MQTT_COMMAND_POLL_INTERVAL_SECONDS', '1.0'))
+MQTT_COMMAND_BATCH_SIZE = int(os.getenv('MQTT_COMMAND_BATCH_SIZE', '20'))
+MQTT_PUBLISH_ACK_TIMEOUT_SECONDS = float(os.getenv('MQTT_PUBLISH_ACK_TIMEOUT_SECONDS', '10.0'))
+
+MQTT_TLS_ENABLED = os.getenv('MQTT_TLS_ENABLED', 'False') == 'True'
+MQTT_TLS_CA_CERT = os.getenv('MQTT_TLS_CA_CERT', '')
+MQTT_TLS_CERTFILE = os.getenv('MQTT_TLS_CERTFILE', '')
+MQTT_TLS_KEYFILE = os.getenv('MQTT_TLS_KEYFILE', '')
+MQTT_TLS_INSECURE = os.getenv('MQTT_TLS_INSECURE', 'False') == 'True'
+MQTT_TLS_VERSION = os.getenv('MQTT_TLS_VERSION', 'TLSv1_2')
+
+MQTT_RECONNECT_DELAY_MIN_SECONDS = int(os.getenv('MQTT_RECONNECT_DELAY_MIN_SECONDS', '1'))
+MQTT_RECONNECT_DELAY_MAX_SECONDS = int(os.getenv('MQTT_RECONNECT_DELAY_MAX_SECONDS', '60'))
 
 # Application Settings
 ENVIRONMENT = os.getenv('ENVIRONMENT', 'development')

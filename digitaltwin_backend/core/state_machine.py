@@ -24,8 +24,17 @@ def evaluate_transition(state, event) -> TransitionResult:
 
     # Global fault dominance
     fault, reason = detect_fault(state)
-    if fault:
-        return TransitionResult(True, "FAULT", f"Forced to FAULT: {reason}")
+    if fault or state.mode == "FAULT":
+        # We only allow admins to shut the system down if it's in a fault.
+        if event_type == "SYSTEM_SHUTDOWN" and role == "ADMIN":
+            return TransitionResult(True, "SYSTEM_OFF", "Emergency shutdown approved.")
+
+        # EVERYTHING else is rejected.
+        return TransitionResult(
+            allowed=False,
+            next_state=None,
+            reason=f"Command REJECTED. System is locked in FAULT: {reason or 'Unknown Fault'}"
+        )
 
     # Cloud loss handling
     if state.cloud_connection_status == "LOST" and state.mode in ["IDLE", "FILLING"]:

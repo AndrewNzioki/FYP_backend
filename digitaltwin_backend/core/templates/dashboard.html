@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Digital Twin Live Feed</title>
+    <style>
+        body { font-family: monospace; background: #1e1e1e; color: #00ff00; padding: 20px; }
+        .alert { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h2>Digital Twin Live Telemetry</h2>
+    <div id="status">Connecting to WebSocket...</div>
+    <pre id="data">No data yet.</pre>
+
+    <script>
+        // Connect to your Django ASGI server
+        const ws = new WebSocket('ws://127.0.0.1:8000/ws/telemetry/');
+
+        ws.onopen = () => {
+            document.getElementById('status').innerText = "CONNECTED TO CLOUD TWIN";
+            document.getElementById('status').style.color = "cyan";
+        };
+
+        ws.onmessage = (event) => {
+            const payload = JSON.parse(event.data);
+            const sysData = payload.data;
+
+            let display = `Comms Link:  ${sysData.cloud_connection_status}\n`; // <-- ADDED THIS
+            display += `Mode:        ${sysData.mode}\n`;
+            display += `Source Tank: ${sysData.source_level.toFixed(1)}%\n`;
+            display += `Tank 1:      ${sysData.tank1_level.toFixed(1)}%\n`;
+            display += `Tank 2:      ${sysData.tank2_level.toFixed(1)}%\n`;
+            display += `Pump State:  ${sysData.pump_actual}\n`;
+            display += `Faults:      ${sysData.fault_status}\n`;
+
+            const dataElement = document.getElementById('data');
+            dataElement.innerText = display;
+
+            // Flash red if there's a fault OR if the connection is lost
+            if (sysData.fault_status !== "OK" || sysData.emergency_stop || sysData.cloud_connection_status === "LOST") {
+                dataElement.className = "alert";
+                document.getElementById('status').innerText = "CRITICAL ALARM - CHECK LOGS";
+                document.getElementById('status').style.color = "red";
+            } else {
+                dataElement.className = "";
+                document.getElementById('status').innerText = "CONNECTED TO CLOUD TWIN";
+                document.getElementById('status').style.color = "cyan";
+            }
+        };
+
+        ws.onclose = () => {
+            document.getElementById('status').innerText = "DISCONNECTED";
+            document.getElementById('status').style.color = "red";
+        };
+    </script>
+</body>
+</html>

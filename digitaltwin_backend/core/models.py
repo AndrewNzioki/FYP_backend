@@ -86,6 +86,12 @@ class Command(models.Model):
         choices=[("PENDING", "PENDING"), ("APPROVED", "APPROVED"), ("REJECTED", "REJECTED")]
     )
     reason = models.TextField(null=True)
+    mqtt_topic = models.CharField(max_length=255, null=True, blank=True)
+    mqtt_qos = models.PositiveSmallIntegerField(default=2)
+    mqtt_published = models.BooleanField(default=False)
+    mqtt_published_at = models.DateTimeField(null=True, blank=True)
+    mqtt_publish_attempts = models.PositiveIntegerField(default=0)
+    mqtt_last_error = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class FaultLog(models.Model):
