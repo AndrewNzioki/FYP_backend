@@ -1,57 +1,606 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Digital Twin Live Feed</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Edge-Master SCADA HMI</title>
     <style>
-        body { font-family: monospace; background: #1e1e1e; color: #00ff00; padding: 20px; }
-        .alert { color: red; font-weight: bold; }
+        @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Share+Tech+Mono&display=swap");
+
+        :root {
+            --bg: #1e1e1e;
+            --panel: #262b35;
+            --panel-soft: #20242d;
+            --line: #2f3544;
+            --text: #e7ecff;
+            --subtext: #8ea0cc;
+            --neon-cyan: #00eaff;
+            --neon-green: #44ff9b;
+            --neon-amber: #ffc857;
+            --neon-red: #ff375f;
+            --neon-blue: #25a8ff;
+            --tile-radius: 14px;
+            --shadow: 0 18px 30px rgba(0, 0, 0, 0.35);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            min-height: 100vh;
+            background:
+                radial-gradient(circle at 20% 10%, #2f3340 0%, transparent 38%),
+                radial-gradient(circle at 80% 0%, #243451 0%, transparent 40%),
+                linear-gradient(145deg, #16181f, var(--bg) 65%);
+            color: var(--text);
+            font-family: "Share Tech Mono", "Consolas", monospace;
+            padding: 12px;
+        }
+
+        .hmi-shell {
+            max-width: 980px;
+            margin: 0 auto;
+            background: linear-gradient(140deg, #222733 0%, #1a1f29 100%);
+            border: 2px solid #2f3648;
+            border-radius: 20px;
+            box-shadow: var(--shadow);
+            overflow: hidden;
+            position: relative;
+        }
+
+        .hmi-shell.fault-flash {
+            animation: faultBorder 1s infinite;
+        }
+
+        @keyframes faultBorder {
+            0% { border-color: #7f2739; box-shadow: var(--shadow); }
+            50% { border-color: var(--neon-red); box-shadow: 0 0 24px rgba(255, 55, 95, 0.65); }
+            100% { border-color: #7f2739; box-shadow: var(--shadow); }
+        }
+
+        .topbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: rgba(0, 0, 0, 0.26);
+            border-bottom: 1px solid var(--line);
+        }
+
+        .title {
+            font-family: "Orbitron", sans-serif;
+            font-size: 1.05rem;
+            letter-spacing: 1px;
+            color: var(--neon-cyan);
+            text-transform: uppercase;
+        }
+
+        .status-strip {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .pill {
+            border: 1px solid #374156;
+            background: #202734;
+            border-radius: 999px;
+            padding: 6px 10px;
+            font-size: 0.78rem;
+            color: var(--subtext);
+            white-space: nowrap;
+        }
+
+        .pill.good { color: var(--neon-green); border-color: #2f7d60; }
+        .pill.warn { color: var(--neon-amber); border-color: #8b743f; }
+        .pill.bad { color: var(--neon-red); border-color: #8b3f52; }
+        .pill.live { color: var(--neon-cyan); border-color: #2a6d84; }
+
+        .grid {
+            display: grid;
+            gap: 12px;
+            padding: 12px;
+            grid-template-columns: 1fr;
+        }
+
+        .tile {
+            border: 1px solid var(--line);
+            background: linear-gradient(170deg, var(--panel) 0%, var(--panel-soft) 100%);
+            border-radius: var(--tile-radius);
+            padding: 14px;
+        }
+
+        .tile h3 {
+            font-size: 0.8rem;
+            color: var(--subtext);
+            letter-spacing: 1.1px;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        .metric-value {
+            font-family: "Orbitron", sans-serif;
+            font-size: clamp(2.2rem, 13vw, 3.4rem);
+            line-height: 1;
+            color: var(--neon-cyan);
+            margin-bottom: 10px;
+        }
+
+        .metric-bar {
+            width: 100%;
+            height: 12px;
+            border: 1px solid #34435f;
+            border-radius: 999px;
+            overflow: hidden;
+            background: #1a1f2c;
+        }
+
+        .metric-fill {
+            height: 100%;
+            width: 0%;
+            transition: width 0.45s ease;
+            background: linear-gradient(90deg, #2286ff, #00f5d4);
+        }
+
+        .state-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 9px 10px;
+            border-radius: 10px;
+            border: 1px solid #303a4d;
+            background: #1b222f;
+            margin-bottom: 8px;
+            font-size: 0.92rem;
+        }
+
+        .state-row strong {
+            color: var(--text);
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            font-weight: 700;
+        }
+
+        .state-row span {
+            color: var(--subtext);
+            text-align: right;
+            margin-left: 10px;
+        }
+
+        .state-row.active span {
+            color: var(--neon-green);
+        }
+
+        .state-row.pump-fill {
+            border-color: #356f9b;
+            background: linear-gradient(160deg, #1e2b3b, #162437);
+            box-shadow: 0 0 18px rgba(37, 168, 255, 0.35);
+        }
+
+        .control-wrap {
+            padding: 0 12px 14px;
+        }
+
+        .control-box {
+            border: 1px solid #3a4052;
+            border-radius: var(--tile-radius);
+            background: linear-gradient(170deg, #272f3c 0%, #1d2330 100%);
+            padding: 14px;
+        }
+
+        .control-box h3 {
+            font-family: "Orbitron", sans-serif;
+            font-size: 0.95rem;
+            color: #d8def7;
+            margin-bottom: 12px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .intent-grid {
+            display: grid;
+            gap: 10px;
+            grid-template-columns: 1fr;
+        }
+
+        .intent-btn {
+            appearance: none;
+            width: 100%;
+            border: 1px solid #446191;
+            border-radius: 12px;
+            background: linear-gradient(145deg, #22324e, #19263f);
+            color: #eff4ff;
+            padding: 13px 12px;
+            text-align: left;
+            font-family: "Orbitron", sans-serif;
+            font-size: 0.86rem;
+            letter-spacing: 0.5px;
+            cursor: pointer;
+            transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+        }
+
+        .intent-btn:active {
+            transform: translateY(1px) scale(0.995);
+        }
+
+        .intent-btn:hover {
+            border-color: #53a7ff;
+            box-shadow: 0 0 14px rgba(83, 167, 255, 0.35);
+        }
+
+        .intent-btn.danger {
+            border-color: #8f3751;
+            background: linear-gradient(145deg, #4b212f, #351926);
+        }
+
+        .intent-btn.danger:hover {
+            border-color: #ff5a7f;
+            box-shadow: 0 0 14px rgba(255, 90, 127, 0.35);
+        }
+
+        .intent-feedback {
+            margin-top: 12px;
+            color: var(--subtext);
+            font-size: 0.82rem;
+            min-height: 1.2rem;
+        }
+
+        .overlay {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 10px;
+            text-align: center;
+            background: rgba(10, 12, 16, 0.95);
+            z-index: 999;
+            color: #ffe0e6;
+            padding: 18px;
+        }
+
+        .overlay.hidden {
+            display: none;
+        }
+
+        .overlay h1 {
+            font-family: "Orbitron", sans-serif;
+            font-size: clamp(2rem, 14vw, 4.1rem);
+            letter-spacing: 2px;
+            color: #ff426a;
+            text-transform: uppercase;
+            text-shadow: 0 0 15px rgba(255, 66, 106, 0.65);
+        }
+
+        .overlay p {
+            color: #ffb4c5;
+            font-size: 0.95rem;
+        }
+
+        .overlay button {
+            margin-top: 6px;
+            border: 1px solid #6f7b95;
+            background: #202736;
+            color: #f5f8ff;
+            border-radius: 10px;
+            padding: 10px 18px;
+            font-family: "Orbitron", sans-serif;
+            cursor: pointer;
+        }
+
+        @media (min-width: 760px) {
+            body {
+                padding: 20px;
+            }
+
+            .grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 14px;
+                padding: 14px;
+            }
+
+            .intent-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+        }
     </style>
 </head>
 <body>
-    <h2>Digital Twin Live Telemetry</h2>
-    <div id="status">Connecting to WebSocket...</div>
-    <pre id="data">No data yet.</pre>
+    <div class="overlay hidden" id="connectionOverlay" aria-live="assertive">
+        <h1>Connection Lost</h1>
+        <p>Telemetry link to SCADA backend is down.</p>
+        <p style="font-size: 0.8rem; color: #888;">Ensure 'python manage.py runserver 0.0.0.0:8000' is running.</p>
+        <button id="reconnectBtn" type="button">Reconnect</button>
+    </div>
+
+    <main class="hmi-shell" id="hmiShell">
+        <header class="topbar">
+            <h1 class="title">Water Plant SCADA | Edge-Master Telemetry</h1>
+            <div class="status-strip">
+                <div class="pill live" id="wsBadge">WS CONNECTING</div>
+                <div class="pill" id="cloudBadge">CLOUD UNKNOWN</div>
+                <div class="pill" id="modeBadge">MODE --</div>
+            </div>
+        </header>
+
+        <section class="grid">
+            <article class="tile">
+                <h3>Source Reservoir</h3>
+                <div class="metric-value" id="sourceLevelValue">--.-%</div>
+                <div class="metric-bar" aria-hidden="true">
+                    <div class="metric-fill" id="sourceLevelFill"></div>
+                </div>
+            </article>
+
+            <article class="tile">
+                <h3>Tank 1 Level</h3>
+                <div class="metric-value" id="tank1LevelValue">--.-%</div>
+                <div class="metric-bar" aria-hidden="true">
+                    <div class="metric-fill" id="tank1LevelFill"></div>
+                </div>
+            </article>
+
+            <article class="tile">
+                <h3>Operational Mode</h3>
+                <div class="state-row">
+                    <strong>Current Mode</strong>
+                    <span id="modeText">UNKNOWN</span>
+                </div>
+                <div class="state-row">
+                    <strong>Tank 1 Status</strong>
+                    <span id="tankStatusText">UNKNOWN</span>
+                </div>
+                <div class="state-row">
+                    <strong>Source Fault</strong>
+                    <span id="sourceFaultText">UNKNOWN</span>
+                </div>
+            </article>
+
+            <article class="tile" id="actuatorTile">
+                <h3>Actuator Feedback</h3>
+                <div class="state-row" id="pumpRow">
+                    <strong>Pump Actual</strong>
+                    <span id="pumpText">OFF</span>
+                </div>
+                <div class="state-row" id="valveRow">
+                    <strong>Valve 1 Actual</strong>
+                    <span id="valveText">CLOSED</span>
+                </div>
+            </article>
+        </section>
+
+        <section class="control-wrap">
+            <div class="control-box">
+                <h3>Supervisory Control</h3>
+                <div class="intent-grid">
+                    <button class="intent-btn" data-intent="FORCE_FILL_1" type="button">FORCE FILL TANK 1</button>
+                    <button class="intent-btn danger" data-intent="EMERGENCY_STOP" type="button">SCADA EMERGENCY STOP</button>
+                    <button class="intent-btn" data-intent="RELEASE_OVERRIDE" type="button">RELEASE OVERRIDE (AUTO)</button>
+                </div>
+                <p class="intent-feedback" id="intentFeedback">No supervisory intent dispatched.</p>
+            </div>
+        </section>
+    </main>
 
     <script>
-        // Connect to your Django ASGI server
-        const ws = new WebSocket('ws://127.0.0.1:8000/ws/telemetry/');
-
-        ws.onopen = () => {
-            document.getElementById('status').innerText = "CONNECTED TO CLOUD TWIN";
-            document.getElementById('status').style.color = "cyan";
+        const MODE_MAP = {
+            0: "IDLE",
+            1: "HYDRAULIC TRANSITION",
+            2: "FILLING",
+            3: "LOW SUPPLY",
+            4: "SYSTEM FAULT"
         };
 
-        ws.onmessage = (event) => {
-            const payload = JSON.parse(event.data);
-            const sysData = payload.data;
+        const TANK_STATUS_MAP = {
+            0: "OK",
+            1: "SENSOR DEAD",
+            2: "VALVE STUCK",
+            3: "OFFLINE"
+        };
 
-            let display = `Comms Link:  ${sysData.cloud_connection_status}\n`; // <-- ADDED THIS
-            display += `Mode:        ${sysData.mode}\n`;
-            display += `Source Tank: ${sysData.source_level.toFixed(1)}%\n`;
-            display += `Tank 1:      ${sysData.tank1_level.toFixed(1)}%\n`;
-            display += `Tank 2:      ${sysData.tank2_level.toFixed(1)}%\n`;
-            display += `Pump State:  ${sysData.pump_actual}\n`;
-            display += `Faults:      ${sysData.fault_status}\n`;
+        const elements = {
+            hmiShell: document.getElementById("hmiShell"),
+            wsBadge: document.getElementById("wsBadge"),
+            cloudBadge: document.getElementById("cloudBadge"),
+            modeBadge: document.getElementById("modeBadge"),
+            sourceLevelValue: document.getElementById("sourceLevelValue"),
+            tank1LevelValue: document.getElementById("tank1LevelValue"),
+            sourceLevelFill: document.getElementById("sourceLevelFill"),
+            tank1LevelFill: document.getElementById("tank1LevelFill"),
+            modeText: document.getElementById("modeText"),
+            tankStatusText: document.getElementById("tankStatusText"),
+            sourceFaultText: document.getElementById("sourceFaultText"),
+            pumpText: document.getElementById("pumpText"),
+            valveText: document.getElementById("valveText"),
+            pumpRow: document.getElementById("pumpRow"),
+            valveRow: document.getElementById("valveRow"),
+            overlay: document.getElementById("connectionOverlay"),
+            reconnectBtn: document.getElementById("reconnectBtn"),
+            intentFeedback: document.getElementById("intentFeedback")
+        };
 
-            const dataElement = document.getElementById('data');
-            dataElement.innerText = display;
+        const state = {
+            mode: null,
+            source_level_percent: null,
+            source_fault: false,
+            tank1_level_percent: null,
+            tank1_status: null,
+            valve1_actual: false,
+            pump_actual: false,
+            cloud_connection_status: "UNKNOWN"
+        };
 
-            // Flash red if there's a fault OR if the connection is lost
-            if (sysData.fault_status !== "OK" || sysData.emergency_stop || sysData.cloud_connection_status === "LOST") {
-                dataElement.className = "alert";
-                document.getElementById('status').innerText = "CRITICAL ALARM - CHECK LOGS";
-                document.getElementById('status').style.color = "red";
+        let ws = null;
+        let reconnectTimer = null;
+
+        function modeLabel(mode) {
+            return MODE_MAP[Number(mode)] || "UNKNOWN";
+        }
+
+        function tankStatusLabel(status) {
+            return TANK_STATUS_MAP[Number(status)] || "UNKNOWN";
+        }
+
+        function asPercent(value) {
+            const n = Number(value);
+            if (!Number.isFinite(n)) return "--.-%";
+            return `${n.toFixed(1)}%`;
+        }
+
+        function clampPercent(value) {
+            const n = Number(value);
+            if (!Number.isFinite(n)) return 0;
+            return Math.max(0, Math.min(100, n));
+        }
+
+        function isFaultCondition(data) {
+            return Number(data.mode) === 4 || Boolean(data.source_fault);
+        }
+
+        function setBadge(el, className, text) {
+            el.className = `pill ${className}`.trim();
+            el.textContent = text;
+        }
+
+        function updateUI(data) {
+            const modeNumber = Number(data.mode);
+            const modeName = modeLabel(modeNumber);
+            const tankStatusName = tankStatusLabel(data.tank1_status);
+            const sourceFault = Boolean(data.source_fault);
+            const pumpOn = Boolean(data.pump_actual);
+            const valveOpen = Boolean(data.valve1_actual);
+
+            elements.sourceLevelValue.textContent = asPercent(data.source_level_percent);
+            elements.tank1LevelValue.textContent = asPercent(data.tank1_level_percent);
+            elements.sourceLevelFill.style.width = `${clampPercent(data.source_level_percent)}%`;
+            elements.tank1LevelFill.style.width = `${clampPercent(data.tank1_level_percent)}%`;
+
+            elements.modeText.textContent = modeName;
+            elements.tankStatusText.textContent = tankStatusName;
+            elements.sourceFaultText.textContent = sourceFault ? "FAULT DETECTED" : "NORMAL";
+            elements.pumpText.textContent = pumpOn ? "RUNNING" : "STOPPED";
+            elements.valveText.textContent = valveOpen ? "OPEN" : "CLOSED";
+
+            setBadge(elements.modeBadge, modeNumber === 4 ? "bad" : "live", `MODE ${modeNumber}: ${modeName}`);
+
+            const cloudStatus = String(data.cloud_connection_status || "UNKNOWN").toUpperCase();
+            if (cloudStatus === "CONNECTED") {
+                setBadge(elements.cloudBadge, "good", "CLOUD CONNECTED");
+            } else if (cloudStatus === "LOST") {
+                setBadge(elements.cloudBadge, "bad", "CLOUD LOST");
             } else {
-                dataElement.className = "";
-                document.getElementById('status').innerText = "CONNECTED TO CLOUD TWIN";
-                document.getElementById('status').style.color = "cyan";
+                setBadge(elements.cloudBadge, "warn", `CLOUD ${cloudStatus}`);
             }
-        };
 
-        ws.onclose = () => {
-            document.getElementById('status').innerText = "DISCONNECTED";
-            document.getElementById('status').style.color = "red";
-        };
+            elements.hmiShell.classList.toggle("fault-flash", isFaultCondition(data));
+
+            elements.pumpRow.classList.toggle("active", pumpOn);
+            elements.valveRow.classList.toggle("active", valveOpen);
+
+            const fillingActive = modeNumber === 2;
+            elements.pumpRow.classList.toggle("pump-fill", fillingActive);
+            elements.pumpText.style.color = fillingActive ? "var(--neon-blue)" : (pumpOn ? "var(--neon-green)" : "var(--subtext)");
+        }
+
+        function showConnectionLostOverlay(show) {
+            elements.overlay.classList.toggle("hidden", !show);
+        }
+
+        // ==========================================
+        // THE FIX: LAPTOP WI-FI IP REQUIRED
+        // ==========================================
+        function websocketUrl() {
+            // Hardcoded to your laptop's actual IP address on the network
+            return "ws://10.228.43.246:8000/ws/telemetry/";
+        }
+
+        function connectWebSocket() {
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+
+            setBadge(elements.wsBadge, "warn", "WS CONNECTING");
+
+            ws = new WebSocket(websocketUrl());
+
+            ws.onopen = () => {
+                setBadge(elements.wsBadge, "live", "WS ONLINE");
+                showConnectionLostOverlay(false);
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const packet = JSON.parse(event.data);
+                    // Handle nested data or direct payload
+                    const incoming = packet && packet.data ? packet.data : packet;
+                    Object.assign(state, incoming);
+                    updateUI(state);
+                } catch (error) {
+                    setBadge(elements.wsBadge, "warn", "WS PARSE WARN");
+                    console.error("Telemetry parse error:", error);
+                }
+            };
+
+            ws.onerror = () => {
+                setBadge(elements.wsBadge, "bad", "WS ERROR");
+            };
+
+            ws.onclose = () => {
+                setBadge(elements.wsBadge, "bad", "WS OFFLINE");
+                showConnectionLostOverlay(true);
+                reconnectTimer = setTimeout(connectWebSocket, 1800);
+            };
+        }
+
+        async function dispatchIntent(intent) {
+            const requestPayload = {
+                issued_by: "ADMIN",
+                payload: {
+                    intent: intent
+                }
+            };
+
+            elements.intentFeedback.textContent = `Dispatching intent: ${intent}...`;
+
+            try {
+                // Hardcoded to your laptop's IP address
+                const response = await fetch("http://10.228.43.246:8000/api/commands/request-mode-change/", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(requestPayload)
+                });
+
+                const body = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(body.message || `HTTP ${response.status}`);
+                }
+
+                elements.intentFeedback.textContent = `Intent dispatched: ${intent}`;
+            } catch (error) {
+                elements.intentFeedback.textContent = `Intent failed: ${error.message}`;
+            }
+        }
+
+        document.querySelectorAll(".intent-btn").forEach((button) => {
+            button.addEventListener("click", () => {
+                dispatchIntent(button.dataset.intent);
+            });
+        });
+
+        elements.reconnectBtn.addEventListener("click", () => {
+            showConnectionLostOverlay(false);
+            connectWebSocket();
+        });
+
+        updateUI(state);
+        connectWebSocket();
     </script>
 </body>
 </html>

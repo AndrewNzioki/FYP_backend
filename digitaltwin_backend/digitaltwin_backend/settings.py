@@ -30,7 +30,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-!bgapec)y&m_(fu82&*8mt#7k2
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -139,7 +139,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Africa/Nairobi'
 
 USE_I18N = True
 

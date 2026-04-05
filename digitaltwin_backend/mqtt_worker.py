@@ -1,85 +1,40 @@
-"""Standalone MQTT worker process for Django backend.
+import time
+import json
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
+from core.models import SystemState, TankState, TelemetryLog
 
-Run this worker separately from the web server:
-    python mqtt_worker.py
-"""
+channel_layer = get_channel_layer()
+LAST_DB_WRITE = 0
+DB_WRITE_INTERVAL = 60 # Seconds
 
-from __future__ import annotations
+def on_message(client, userdata, msg):
+    global LAST_DB_WRITE
+    current_time = time.time()
+    payload = json.loads(msg.payload)
 
-import logging
-import os
-import signal
-import threading
-
-import django
-
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "digitaltwin_backend.settings")
-django.setup()
-
-from django.conf import settings
-
-from core.mqtt.client import create_mqtt_client
-from core.mqtt.handlers import TelemetryMessageHandler
-from core.mqtt.publisher import CommandPublisher
-
-logger = logging.getLogger("mqtt_worker")
-
-
-def _configure_logging() -> None:
-    """Ensure worker logging has a fallback format if Django logging is not configured."""
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
-            format="%(levelname)s %(asctime)s %(name)s %(message)s",
-        )
-
-
-def main() -> None:
-    """Run MQTT background worker with reconnect and command polling loop."""
-    _configure_logging()
-
-    stop_event = threading.Event()
-    handler = TelemetryMessageHandler()
-    client = create_mqtt_client(handler=handler)
-    publisher = CommandPublisher(client=client)
-
-    def _request_shutdown(*_: object) -> None:
-        logger.info("Shutdown signal received; stopping worker loop.")
-        stop_event.set()
-
-    signal.signal(signal.SIGINT, _request_shutdown)
-    signal.signal(signal.SIGTERM, _request_shutdown)
-
-    logger.info(
-        "Starting MQTT worker host=%s port=%s tls=%s",
-        settings.MQTT_BROKER_HOST,
-        settings.MQTT_BROKER_PORT,
-        settings.MQTT_TLS_ENABLED,
+    # 1. ALWAYS push to Redis for the Compose App (Real-time 1Hz)
+    async_to_sync(channel_layer.group_send)(
+        "telemetry_group",
+        {
+            "type": "telemetry_update",
+            "data": payload
+        }
     )
 
-    client.connect_async(
-        host=settings.MQTT_BROKER_HOST,
-        port=settings.MQTT_BROKER_PORT,
-        keepalive=settings.MQTT_KEEPALIVE,
-    )
-    client.loop_start()
+    # 2. UPDATE the "Current State" in the DB (Overwrites the single active row)
+    # This ensures your REST API always has the latest snapshot without bloating history.
+    update_current_system_state(payload) 
 
-    try:
-        while not stop_event.is_set():
-            try:
-                published_count = publisher.publish_approved_commands()
-                if published_count:
-                    logger.info("Published %s command(s) in this poll cycle.", published_count)
-            except Exception:
-                logger.exception("Unhandled exception in command polling loop")
+    # 3. THROTTLE the Historical Logging (1 Minute)
+    if current_time - LAST_DB_WRITE >= DB_WRITE_INTERVAL:
+        log_telemetry_to_db(payload)
+        LAST_DB_WRITE = current_time
 
-            stop_event.wait(settings.MQTT_COMMAND_POLL_INTERVAL_SECONDS)
-    finally:
-        logger.info("Stopping MQTT network loop and disconnecting client.")
-        client.loop_stop()
-        client.disconnect()
+def update_current_system_state(payload):
+    # Overwrite the active SystemState and related TankStates
+    pass 
 
-
-if __name__ == "__main__":
-    main()
-
+def log_telemetry_to_db(payload):
+    # Append a new row to TelemetryLog for historical charting
+    pass

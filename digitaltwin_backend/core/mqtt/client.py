@@ -26,6 +26,43 @@ def _resolve_tls_version(version_name: str) -> int:
     return mapping.get(version_name.upper(), ssl.PROTOCOL_TLS_CLIENT)
 
 
+def _on_connect(client, userdata, flags, rc):
+    if rc == 0:
+        print("✅ [MQTT] Worker successfully connected to Mosquitto Broker!")
+        # THIS IS THE MOST IMPORTANT LINE. If it's missing, you hear nothing.
+        client.subscribe("plant/telemetry/state", qos=1)
+        print("✅ [MQTT] Subscribed to plant/telemetry/state")
+    else:
+        print(f"❌ [MQTT] Failed to connect, return code {rc}")
+
+
+def _on_disconnect(client: mqtt.Client, userdata: dict[str, Any], rc: int) -> None:
+    """Log disconnects and attempt explicit reconnect when unexpected."""
+    if rc == 0:
+        logger.info("MQTT disconnected cleanly")
+        return
+
+    logger.warning("Unexpected MQTT disconnect rc=%s. Reconnect will be attempted.", rc)
+    try:
+        client.reconnect()
+    except Exception:
+        logger.exception("MQTT reconnect attempt failed")
+
+
+def _on_message(client: mqtt.Client, userdata: dict[str, Any], msg: mqtt.MQTTMessage) -> None:
+    """Delegate incoming messages to the telemetry handler."""
+    handler = userdata.get("handler") if isinstance(userdata, dict) else None
+    if not isinstance(handler, TelemetryMessageHandler):
+        logger.error("MQTT handler missing from client userdata; dropping message topic=%s", msg.topic)
+        return
+
+    try:
+        # FIXED: Passing all required arguments to match the handler signature
+        handler.handle(client, userdata, msg)
+    except Exception:
+        logger.exception("Unhandled error in MQTT message callback topic=%s", msg.topic)
+
+
 def create_mqtt_client(handler: TelemetryMessageHandler) -> mqtt.Client:
     """Create and configure MQTT client with callbacks and secure options."""
     client = mqtt.Client(
@@ -60,47 +97,3 @@ def create_mqtt_client(handler: TelemetryMessageHandler) -> mqtt.Client:
     client.user_data_set({"handler": handler})
 
     return client
-
-
-def _on_connect(client: mqtt.Client, userdata: dict[str, Any], flags: dict[str, Any], rc: int) -> None:
-    """Subscribe to telemetry topics once connected."""
-    if rc != 0:
-        logger.error("MQTT connection failed with rc=%s", rc)
-        return
-
-    telemetry_qos = settings.MQTT_TELEMETRY_QOS
-    for topic in (settings.MQTT_TELEMETRY_STATE_TOPIC, settings.MQTT_TELEMETRY_HEALTH_TOPIC):
-        result, mid = client.subscribe(topic, qos=telemetry_qos)
-        if result != mqtt.MQTT_ERR_SUCCESS:
-            logger.error("Failed subscribing to topic=%s result=%s", topic, result)
-        else:
-            logger.info("Subscribed topic=%s qos=%s mid=%s", topic, telemetry_qos, mid)
-
-    logger.info("MQTT connected rc=%s session_present=%s", rc, flags.get("session present"))
-
-
-def _on_disconnect(client: mqtt.Client, userdata: dict[str, Any], rc: int) -> None:
-    """Log disconnects and attempt explicit reconnect when unexpected."""
-    if rc == 0:
-        logger.info("MQTT disconnected cleanly")
-        return
-
-    logger.warning("Unexpected MQTT disconnect rc=%s. Reconnect will be attempted.", rc)
-    try:
-        client.reconnect()
-    except Exception:
-        logger.exception("MQTT reconnect attempt failed")
-
-
-def _on_message(client: mqtt.Client, userdata: dict[str, Any], msg: mqtt.MQTTMessage) -> None:
-    """Delegate incoming messages to the telemetry handler."""
-    handler = userdata.get("handler") if isinstance(userdata, dict) else None
-    if not isinstance(handler, TelemetryMessageHandler):
-        logger.error("MQTT handler missing from client userdata; dropping message topic=%s", msg.topic)
-        return
-
-    try:
-        handler.handle(msg)
-    except Exception:
-        logger.exception("Unhandled error in MQTT message callback topic=%s", msg.topic)
-
