@@ -1,21 +1,20 @@
 #!/bin/bash
-# Exit immediately if any command fails
 set -e
 
-echo "=== Running Database Migrations ==="
+echo "=== Migrating ==="
 python manage.py migrate --noinput
 
-echo "=== Ensuring Superuser Exists ==="
-# We use || true to prevent the script from crashing if the user already exists.
-# It will attempt to create the user, and if Django throws an error (because it exists),
-# Bash will just print the echo statement and keep moving.
-python manage.py createsuperuser --noinput || echo "Superuser already exists, skipping."
+echo "=== Superuser ==="
+python manage.py createsuperuser --noinput || echo "Skipping superuser"
 
-echo "=== Starting Celery Worker (Background) ==="
-celery -A digitaltwin_backend worker --loglevel=info &
+echo "=== Starting Celery (VLC Mode: 1 Worker Only) ==="
+# --concurrency=1 prevents Celery from spawning multiple child processes
+# --max-tasks-per-child=10 keeps memory leaks from growing
+celery -A digitaltwin_backend worker --loglevel=info --concurrency=1 --max-tasks-per-child=10 &
 
-echo "=== Starting MQTT Listener (Background) ==="
+echo "=== Starting MQTT Listener ==="
 python manage.py run_mqtt &
 
-echo "=== Starting ASGI Web Server (Foreground) ==="
-daphne -b 0.0.0.0 -p ${PORT:-8000} digitaltwin_backend.asgi:application
+echo "=== Starting ASGI Server ==="
+# Use 1 worker for Daphne to save RAM
+daphne -b 0.0.0.0 -p ${PORT:-8000} --access-log /dev/null digitaltwin_backend.asgi:application
