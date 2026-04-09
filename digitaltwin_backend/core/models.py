@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 
 
@@ -44,6 +46,15 @@ class TankState(models.Model):
 
 
 class Command(models.Model):
+
+    class Status(models.TextChoices):
+        QUEUED = "QUEUED", "Queued"
+        PUBLISHED = "PUBLISHED", "Published to MQTT"
+        ACKNOWLEDGED = "ACKNOWLEDGED", "Acknowledged by Edge"
+        EXECUTING = "EXECUTING", "Executing"
+        COMPLETED = "COMPLETED", "Completed"
+        FAILED = "FAILED", "Failed"
+
     COMMAND_TYPES = [
         ("REQUEST_MODE_CHANGE", "REQUEST_MODE_CHANGE"),
         ("REQUEST_SUPPLY_TO_TANK", "REQUEST_SUPPLY_TO_TANK"),
@@ -57,11 +68,13 @@ class Command(models.Model):
     issued_by = models.CharField(max_length=32)
     status = models.CharField(
         max_length=16,
-        choices=[("PENDING", "PENDING"), ("APPROVED", "APPROVED"), ("REJECTED", "REJECTED")]
+        choices=Status.choices,
+        default = Status.QUEUED
     )
     reason = models.TextField(null=True)
 
-    # 🚨 RESTORED MQTT TRACKING FIELDS 🚨
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
     mqtt_topic = models.CharField(max_length=255, null=True, blank=True)
     mqtt_qos = models.PositiveSmallIntegerField(default=2)
     mqtt_published = models.BooleanField(default=False)
@@ -69,7 +82,12 @@ class Command(models.Model):
     mqtt_publish_attempts = models.PositiveIntegerField(default=0)
     mqtt_last_error = models.TextField(null=True, blank=True)
 
+    error_message = models.TextField(blank=True, null=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
 
 class TelemetryLog(models.Model):
     ts = models.DateTimeField(auto_now_add=True)

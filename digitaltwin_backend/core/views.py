@@ -5,10 +5,16 @@ from ninja import NinjaAPI, Schema, Query
 from pydantic import Field
 from django.http import JsonResponse
 from core.models import Command, TelemetryLog, FaultLog, SystemState, TankState
+from core.tasks import publish_command_task
+from ninja_jwt.authentication import JWTAuth
+from ninja_jwt.controller import NinjaJWTDefaultController
+from ninja_extra import NinjaExtraAPI
 
 logger = logging.getLogger(__name__)
 
-api = NinjaAPI(title="Digital Twin SCADA API", description="Explicit Actuator Control and Telemetry")
+api = NinjaExtraAPI(title="Digital Twin SCADA API", description="Explicit Actuator Control and Telemetry")
+
+api.register_controllers(NinjaJWTDefaultController)
 
 ALLOWED_ISSUERS = {"USER", "ADMIN"}
 
@@ -55,23 +61,36 @@ def _is_admin_authorized(request, issuer: str) -> bool:
 def _dispatch_intent(request, intent: str, payload_data: Dict[str, Any], issued_by: str):
     issuer = _resolve_issuer(request, issued_by)
     if not _is_admin_authorized(request, issuer):
-        return JsonResponse({"status": "forbidden", "message": "Admin privileges required."}, status=403)
+        return JsonResponse(
+            {"status": "forbidden",
+             "message": "Admin privileges required."},
+            status=403)
 
     try:
-        Command.objects.create(
-            command_type=intent, payload=payload_data, issued_by=issuer, status="APPROVED", mqtt_published=False
+        # Create the command with the new strict status and payload name
+        command = Command.objects.create(
+            command_type=intent,
+            payload=payload_data,
+            issued_by=issuer,
+            status=Command.Status.QUEUED
         )
+
+        publish_command_task.delay(str(command.id))
     except Exception:
         logger.exception("Failed to queue supervisory intent: %s", intent)
         return JsonResponse({"status": "error", "message": "Database queuing failed."}, status=503)
 
-    return JsonResponse({"status": "intent_dispatched", "message": f"Command '{intent}' queued for Edge execution."},
-                        status=202)
+        # BRUTAL FIX: Return the UUID to the frontend so it can listen for updates later
+    return JsonResponse({
+        "status": "intent_dispatched",
+        "command_id": str(command.id),  # THE CRITICAL HANDOFF
+        "message": f"Command '{intent}' queued for Edge execution."
+    }, status=202)
 
 
 # --- EXPLICIT ACTUATOR ENDPOINTS ---
 
-@api.post("/fill-tanks", tags=["Commands"])
+@api.post("/fill-tanks", tags=["Commands"], auth=JWTAuth())
 def request_supply_to_tanks(request, data: TankActionRequest):
     targets = data.payload.get("target_tanks", [])
     if not isinstance(targets, list) or len(targets) == 0:
@@ -126,7 +145,7 @@ def request_supply_to_tanks(request, data: TankActionRequest):
     return _dispatch_intent(request, "SUPPLY_TANKS", data.payload, data.issued_by)
 
 
-@api.post("/stop-filling-tanks", tags=["Commands"])
+@api.post("/stop-filling-tanks", tags=["Commands"], auth=JWTAuth())
 def stop_filling_tanks(request, data: TankActionRequest):
     targets = data.payload.get("target_tanks", [])
     if not isinstance(targets, list) or len(targets) == 0:
@@ -135,24 +154,24 @@ def stop_filling_tanks(request, data: TankActionRequest):
     return _dispatch_intent(request, "STOP_SUPPLY_TANKS", data.payload, data.issued_by)
 
 
-@api.post("/emergency-stop", tags=["Commands"])
+@api.post("/emergency-stop", tags=["Commands"], auth=JWTAuth())
 def emergency_stop(request, data: StandardCommandRequest):
     return _dispatch_intent(request, "EMERGENCY_STOP", data.payload, data.issued_by)
 
 
-@api.post("/clear-fault", tags=["Commands"])
+@api.post("/clear-fault", tags=["Commands"], auth=JWTAuth())
 def clear_fault(request, data: StandardCommandRequest):
     """Attempts to remove the system from FAULT mode (Only works if hardware is physically healthy)."""
     return _dispatch_intent(request, "CLEAR_FAULT", data.payload, data.issued_by)
 
 
-@api.post("/modify-constants", tags=["Commands"])
+@api.post("/modify-constants", tags=["Commands"], auth=JWTAuth())
 def modify_constants(request, data: ModifyConstantsRequest):
     return _dispatch_intent(request, "MODIFY_CONSTANTS", data.payload, data.issued_by)
 
 
 # --- HISTORY ENDPOINTS ---
-@api.get("/telemetry-history", tags=["History"])
+@api.get("/telemetry-history", tags=["History"], auth=JWTAuth())
 def get_telemetry_history(request, filters: HistoryFilter = Query(...)):
     qs = TelemetryLog.objects.all().order_by("-ts")
     if filters.start: qs = qs.filter(ts__gte=filters.start)
@@ -161,7 +180,7 @@ def get_telemetry_history(request, filters: HistoryFilter = Query(...)):
             "data": list(qs.values("ts", "mode", "source_level_percent", "pump_actual", "tanks_snapshot"))}
 
 
-@api.get("/fault-history", tags=["History"])
+@api.get("/fault-history", tags=["History"], auth=JWTAuth())
 def get_fault_history(request, filters: HistoryFilter = Query(...)):
     qs = FaultLog.objects.all().order_by("-ts")
     if filters.start: qs = qs.filter(ts__gte=filters.start)

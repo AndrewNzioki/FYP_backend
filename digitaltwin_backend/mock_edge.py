@@ -1,12 +1,14 @@
 import paho.mqtt.client as mqtt
 import json
 import time
+from decouple import config
 
 # --- CONFIGURATION ---
-MQTT_BROKER = "localhost"
-MQTT_PORT = 1883
-TOPIC_TELEMETRY = "plant/telemetry/state"
+MQTT_BROKER = config('MQTT_BROKER_HOST', default='localhost')
+MQTT_PORT = config('MQTT_BROKER_PORT', default=1883, cast=int)
+TOPIC_TELEMETRY = config('MQTT_TELEMETRY_STATE_TOPIC', default='plant/telemetry/state')
 TOPIC_COMMAND_SUB = "plant/command/#"
+TOPIC_COMMAND_ACK = "plant/command/ack"  # New Dedicated ACK topic
 
 
 class VirtualMaster:
@@ -19,7 +21,6 @@ class VirtualMaster:
 
         self.start_time = time.time()
         self.transition_start_time = 0.0
-        self.fault_injected = False
         self.active_valves = []
 
         self.tanks = {
@@ -91,51 +92,41 @@ class VirtualMaster:
                 self.pump_actual = False
                 self.mode = 0
 
-        # 7. MODE 0: AUTONOMOUS PRIORITY
+        # 7. MODE 0: AUTONOMOUS PRIORITY (BRUTAL FIX: Now fills ALL needy tanks simultaneously)
         if self.mode == 0:
             needy_tanks = [t_id for t_id, t_data in self.tanks.items() if
                            t_data["level"] <= 30.0 and t_data["status"] == 0]
             if needy_tanks:
-                needy_tanks.sort(key=lambda tid: self.tanks[tid]["level"])
-                target = needy_tanks[0]
-                print(f"\n[EDGE PLC] Autonomous Fill: Tank {target} hit 30%. Entering TRANSITION.")
+                print(f"\n[EDGE PLC] Autonomous Fill: Tanks {needy_tanks} hit <= 30%. Entering TRANSITION.")
                 self.mode = 1
-                self.active_valves = [target]
+                self.active_valves = needy_tanks
                 self.transition_start_time = time.time()
 
-                # 8. INJECT A FAULT AT 30 SECONDS
-        if not self.fault_injected and (time.time() - self.start_time > 30):
-            if self.tanks[2]["status"] == 0:
-                print("\n⚠️ [EDGE PLC] INJECTING HARDWARE FAULT: Tank 2 Sensor Disconnected!")
-                self.tanks[2]["status"] = 1
-                self.fault_injected = True
+    def handle_cloud_intent(self, command_id, command_type, payload):
+        print(f"\n[EDGE PLC] Command Received: {command_type} | ID: {command_id} | Payload: {payload}")
 
-                # If Tank 2 was actively filling, we must fault the system
-                if 2 in self.active_valves:
-                    print("🚨 [EDGE PLC] TANK 2 FAULTED WHILE FILLING! ABORTING PUMP! 🚨")
-                    self.mode = 4
-                    self.pump_actual = False
-                    for t in self.tanks.values(): t["valve"] = False
-                    self.active_valves = []
-
-    def handle_cloud_intent(self, command_type, payload):
-        print(f"\n[EDGE PLC] Command Received: {command_type} | Payload: {payload}")
+        status = "ACKNOWLEDGED"
+        msg = f"Executing {command_type}"
 
         if command_type == "SUPPLY_TANKS":
             targets = payload.get("target_tanks", [])
             if self.mode == 4:
-                print("[EDGE PLC] HARDWARE VETO: System is in FAULT state.")
+                status, msg = "REJECTED", "HARDWARE VETO: System is in FAULT state."
+                print(f"[EDGE PLC] {msg}")
             elif self.source_fault:
-                print("[EDGE PLC] HARDWARE VETO: Source tank sensor is faulted.")
+                status, msg = "REJECTED", "HARDWARE VETO: Source tank sensor is faulted."
+                print(f"[EDGE PLC] {msg}")
             else:
                 # 🚨 Edge-level validation against faults and redundant commands
                 valid_targets = [t for t in targets if
                                  t in self.tanks and self.tanks[t]["status"] == 0 and t not in self.active_valves]
 
                 if not valid_targets:
-                    print("[EDGE PLC] IGNORING: No valid, healthy, non-filling targets provided.")
+                    status, msg = "REJECTED", "IGNORING: No valid, healthy, non-filling targets provided."
+                    print(f"[EDGE PLC] {msg}")
                 else:
-                    print(f"[EDGE PLC] EXECUTING: Forcing valves open for {valid_targets}")
+                    msg = f"EXECUTING: Forcing valves open for {valid_targets}"
+                    print(f"[EDGE PLC] {msg}")
                     self.active_valves = list(set(self.active_valves + valid_targets))
                     self.mode = 1
                     self.transition_start_time = time.time()
@@ -160,16 +151,18 @@ class VirtualMaster:
 
         elif command_type == "CLEAR_FAULT":
             if self.mode != 4:
-                print("[EDGE PLC] IGNORING: System is not in FAULT mode.")
+                status, msg = "REJECTED", "IGNORING: System is not in FAULT mode."
+                print(f"[EDGE PLC] {msg}")
             else:
-                # 🚨 Check if there are ACTUAL physical hardware faults present
                 hw_faults = [t_id for t_id, t_data in self.tanks.items() if t_data["status"] != 0]
                 if self.source_fault or hw_faults:
-                    print(
-                        f"\n❌ [EDGE PLC] VETO: Cannot clear fault! Hardware errors exist on Tanks: {hw_faults} or Source. Fix physical issue first.")
+                    status, msg = "REJECTED", f"VETO: Cannot clear fault! Hardware errors exist on Tanks: {hw_faults} or Source."
+                    print(f"\n❌ [EDGE PLC] {msg}")
                 else:
                     print("\n✅ [EDGE PLC] EXECUTING: Software fault cleared (Admin E-Stop Reset). Returning to IDLE.")
                     self.mode = 0
+
+        return status, msg
 
     def generate_payload(self):
         return {
@@ -194,12 +187,28 @@ def on_connect(client, userdata, flags, rc):
 def on_message(client, userdata, msg):
     try:
         data = json.loads(msg.payload.decode())
-        edge_plc.handle_cloud_intent(data.get("command_type"), data.get("payload", {}))
+        command_id = data.get("command_id")
+        command_type = data.get("command_type")
+        payload = data.get("target_payload", data.get("payload", {}))  # Catch both new and old keys
+
+        if command_id and command_type:
+            # 1. Edge processes the logic
+            status, ack_msg = edge_plc.handle_cloud_intent(command_id, command_type, payload)
+
+            # 2. Edge INSTANTLY fires back an ACK
+            ack_payload = {
+                "command_id": command_id,
+                "status": status,
+                "message": ack_msg
+            }
+            client.publish(TOPIC_COMMAND_ACK, json.dumps(ack_payload), qos=1)
+            print(f"📤 [EDGE PLC] Sent Handshake ACK: {status} to Cloud.")
+
     except Exception as e:
         print(f"[EDGE PLC] JSON Parse Error: {e}")
 
 
-print("🚀 Booting Multi-Valve Edge PLC with SCADA Interlocks...")
+print("🚀 Booting Multi-Valve Edge PLC with Cloud Handshake Protocol...")
 client = mqtt.Client()
 client.on_connect = on_connect
 client.on_message = on_message

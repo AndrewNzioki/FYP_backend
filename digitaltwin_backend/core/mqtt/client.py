@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import certifi
 import logging
 import ssl
 from typing import Any
@@ -9,13 +10,12 @@ from typing import Any
 from django.conf import settings
 import paho.mqtt.client as mqtt
 
-from core.mqtt.handlers import TelemetryMessageHandler
+# 🚨 FIX: Import both handlers so we can inject them safely
+from core.mqtt.handlers import TelemetryMessageHandler, CommandAckHandler
 
 logger = logging.getLogger(__name__)
 
-
 def _resolve_tls_version(version_name: str) -> int:
-    """Map env-provided TLS version strings to ssl constants."""
     mapping = {
         "TLS": ssl.PROTOCOL_TLS_CLIENT,
         "TLS_CLIENT": ssl.PROTOCOL_TLS_CLIENT,
@@ -25,49 +25,48 @@ def _resolve_tls_version(version_name: str) -> int:
     }
     return mapping.get(version_name.upper(), ssl.PROTOCOL_TLS_CLIENT)
 
-
+# 1.6.1 Strict Signatures
 def _on_connect(client, userdata, flags, rc):
     if rc == 0:
-        print("✅ [MQTT] Worker successfully connected to Mosquitto Broker!")
-        # THIS IS THE MOST IMPORTANT LINE. If it's missing, you hear nothing.
+        print("✅ [MQTT] Worker successfully connected to HiveMQ Broker!")
         client.subscribe("plant/telemetry/state", qos=1)
-        print("✅ [MQTT] Subscribed to plant/telemetry/state")
+        client.subscribe("plant/command/ack", qos=1)
     else:
         print(f"❌ [MQTT] Failed to connect, return code {rc}")
 
-
-def _on_disconnect(client: mqtt.Client, userdata: dict[str, Any], rc: int) -> None:
-    """Log disconnects and attempt explicit reconnect when unexpected."""
+def _on_disconnect(client, userdata, rc):
     if rc == 0:
         logger.info("MQTT disconnected cleanly")
         return
-
-    logger.warning("Unexpected MQTT disconnect rc=%s. Reconnect will be attempted.", rc)
+    logger.warning("Unexpected MQTT disconnect rc=%s. Reconnecting...", rc)
     try:
         client.reconnect()
     except Exception:
         logger.exception("MQTT reconnect attempt failed")
 
-
-def _on_message(client: mqtt.Client, userdata: dict[str, Any], msg: mqtt.MQTTMessage) -> None:
-    """Delegate incoming messages to the telemetry handler."""
-    handler = userdata.get("handler") if isinstance(userdata, dict) else None
-    if not isinstance(handler, TelemetryMessageHandler):
-        logger.error("MQTT handler missing from client userdata; dropping message topic=%s", msg.topic)
-        return
-
+def _on_message(client, userdata, msg):
+    topic = msg.topic
     try:
-        # FIXED: Passing all required arguments to match the handler signature
-        handler.handle(client, userdata, msg)
-    except Exception:
-        logger.exception("Unhandled error in MQTT message callback topic=%s", msg.topic)
+        if topic == "plant/telemetry/state":
+            userdata["telemetry_handler"].handle(client, userdata, msg)
+        elif topic == "plant/command/ack":
+            userdata["ack_handler"].handle(client, userdata, msg)
+        else:
+            logger.warning(f"Message received on unhandled topic: {topic}")
+    except KeyError as e:
+        logger.error(f"Missing handler in userdata for topic {topic}: {e}")
+    except Exception as e:
+        logger.exception(f"Crash while processing message on {topic}: {e}")
 
+# 🚨 FIX: Accept BOTH handlers in the signature
+def create_mqtt_client(
+    telemetry_handler: TelemetryMessageHandler,
+    ack_handler: CommandAckHandler
+) -> mqtt.Client:
 
-def create_mqtt_client(handler: TelemetryMessageHandler) -> mqtt.Client:
-    """Create and configure MQTT client with callbacks and secure options."""
+    # Paho 1.6.1 Native Instantiation
     client = mqtt.Client(
         client_id=settings.MQTT_CLIENT_ID,
-        protocol=mqtt.MQTTv311,
         clean_session=settings.MQTT_CLEAN_SESSION,
         transport=settings.MQTT_TRANSPORT,
     )
@@ -76,14 +75,7 @@ def create_mqtt_client(handler: TelemetryMessageHandler) -> mqtt.Client:
         client.username_pw_set(settings.MQTT_USERNAME, settings.MQTT_PASSWORD)
 
     if settings.MQTT_TLS_ENABLED:
-        tls_version = _resolve_tls_version(settings.MQTT_TLS_VERSION)
-        client.tls_set(
-            ca_certs=settings.MQTT_TLS_CA_CERT or None,
-            certfile=settings.MQTT_TLS_CERTFILE or None,
-            keyfile=settings.MQTT_TLS_KEYFILE or None,
-            tls_version=tls_version,
-        )
-        client.tls_insecure_set(settings.MQTT_TLS_INSECURE)
+        client.tls_set(ca_certs=certifi.where(), tls_version=ssl.PROTOCOL_TLSv1_2)
 
     client.reconnect_delay_set(
         min_delay=settings.MQTT_RECONNECT_DELAY_MIN_SECONDS,
@@ -94,6 +86,11 @@ def create_mqtt_client(handler: TelemetryMessageHandler) -> mqtt.Client:
     client.on_connect = _on_connect
     client.on_disconnect = _on_disconnect
     client.on_message = _on_message
-    client.user_data_set({"handler": handler})
+
+    # 🚨 FIX: Inject the exact dictionary keys the router expects
+    client.user_data_set({
+        "telemetry_handler": telemetry_handler,
+        "ack_handler": ack_handler
+    })
 
     return client

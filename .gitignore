@@ -58,7 +58,7 @@ db.sqlite3
 
 # Environment Variables
 .env
-.env.local
+.env
 .env.production
 .env.*.local
 
@@ -93,4 +93,5 @@ npm-debug.log
 config.local.py
 secrets/
 *.pem
+digitaltwin/
 *.key

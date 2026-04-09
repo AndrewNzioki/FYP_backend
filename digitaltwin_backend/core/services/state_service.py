@@ -8,7 +8,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db import transaction
 
-from core.models import SystemState, TankState, TelemetryLog, FaultLog
+from core.models import SystemState, TankState, TelemetryLog, FaultLog, Command
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,63 @@ def _safe_bool(value: Any, default: bool) -> bool:
         if lowered in {"0", "false", "no", "off"}:
             return False
     return default
+
+
+def _verify_active_commands(payload: dict):
+    active_commands = Command.objects.filter(status__in=[Command.Status.ACKNOWLEDGED, Command.Status.EXECUTING])
+
+    if not active_commands.exists():
+        return
+
+    tanks_data = {_safe_int(t.get("id"), 0): t for t in payload.get("tanks", []) if isinstance(t, dict)}
+
+    # BRUTAL FIX: Extract system-level state to verify E-Stops
+    current_mode = _safe_int(payload.get("mode"), 0)
+    pump_actual = _safe_bool(payload.get("pump_actual"), False)
+
+    for command in active_commands:
+        # NOTE: Using 'payload' not 'target_payload' as fixed earlier
+        cmd_payload = command.payload if isinstance(command.payload, dict) else {}
+        targets = cmd_payload.get("target_tanks", [])
+
+        if command.command_type == "SUPPLY_TANKS":
+            all_full = True
+            any_valve_open = False
+
+            for tid in targets:
+                tank_state = tanks_data.get(tid, {})
+                valve = _safe_bool(tank_state.get("valve_actual"), False)
+                level = _safe_float(tank_state.get("level_percent"), 0.0)
+
+                if valve:
+                    any_valve_open = True
+                if level < 94.0:
+                    all_full = False
+
+            if command.status == Command.Status.ACKNOWLEDGED and any_valve_open:
+                command.status = Command.Status.EXECUTING
+                command.save(update_fields=["status", "updated_at"])
+
+            elif command.status == Command.Status.EXECUTING and all_full and not any_valve_open:
+                command.status = Command.Status.COMPLETED
+                command.save(update_fields=["status", "updated_at"])
+
+        elif command.command_type == "STOP_SUPPLY_TANKS":
+            any_valve_open = any(_safe_bool(tanks_data.get(tid, {}).get("valve_actual"), False) for tid in targets)
+            if not any_valve_open:
+                command.status = Command.Status.COMPLETED
+                command.save(update_fields=["status", "updated_at"])
+
+        # BRUTAL FIX: The missing verification logic for safety commands
+        elif command.command_type == "EMERGENCY_STOP":
+            if current_mode == 4 and not pump_actual:
+                command.status = Command.Status.COMPLETED
+                command.save(update_fields=["status", "updated_at"])
+
+        elif command.command_type == "CLEAR_FAULT":
+            if current_mode != 4:
+                command.status = Command.Status.COMPLETED
+                command.save(update_fields=["status", "updated_at"])
 
 
 def persist_telemetry(payload: dict[str, Any]) -> bool:
@@ -124,6 +181,8 @@ def persist_telemetry(payload: dict[str, Any]) -> bool:
                             "valve_actual": _safe_bool(tank.get("valve_actual"), False),
                         }
                     )
+
+            _verify_active_commands(payload)
 
             # 5. The Throttle: Log history once a minute
             if current_time - LAST_DB_LOG_TIME >= LOGGING_INTERVAL:

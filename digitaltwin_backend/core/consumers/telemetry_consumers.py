@@ -23,7 +23,7 @@ class TelemetryConsumer(AsyncWebsocketConsumer):
         )
         print("❌ [WEBSOCKET] Browser disconnected.")
 
-    # FATAL FLAW 2 FIXED: Method name exactly matches the "type" sent by handlers.py
+
     async def telemetry_update(self, event):
         # FATAL FLAW 3 FIXED: Stop filtering the dict. Pass the raw C++ payload straight to the UI.
         data = event.get("data", {})
