@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import random
+import string
+
 import certifi
 import logging
 import ssl
@@ -64,9 +67,12 @@ def create_mqtt_client(
     ack_handler: CommandAckHandler
 ) -> mqtt.Client:
 
+    random_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
+    client_id = f"{settings.MQTT_CLIENT_ID}-{random_id}"
+
     # Paho 1.6.1 Native Instantiation
     client = mqtt.Client(
-        client_id=settings.MQTT_CLIENT_ID,
+        client_id=client_id,
         clean_session=settings.MQTT_CLEAN_SESSION,
         transport=settings.MQTT_TRANSPORT,
     )
