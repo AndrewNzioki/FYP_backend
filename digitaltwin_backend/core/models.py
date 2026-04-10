@@ -10,6 +10,7 @@ class SystemState(models.Model):
         FILLING = 2, "FILLING"
         LOW_SUPPLY = 3, "LOW_SUPPLY"
         FAULT = 4, "FAULT"
+        PUMP_SPIN_DOWN = 5, 'Pump Spin Down'
 
     MODE_CHOICES = EdgeMode.choices
 
