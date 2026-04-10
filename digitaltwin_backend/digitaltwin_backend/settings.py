@@ -84,7 +84,8 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [(REDIS_HOST, REDIS_PORT)],
+            # 🚨 Point this to your Upstash URL, defaulting to localhost for local testing
+            "hosts": [config('REDIS_URL', default='redis://localhost:6379/0')],
         },
     },
 }
