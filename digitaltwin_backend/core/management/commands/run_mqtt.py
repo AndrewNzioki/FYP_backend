@@ -1,17 +1,15 @@
 import logging
+import paho.mqtt.client as mqtt
 from django.conf import settings
 from django.core.management.base import BaseCommand
-from core.mqtt.handlers import TelemetryMessageHandler, CommandAckHandler # 🚨 ADD CommandAckHandler here
-
-# Bring in both of your handlers
 from core.mqtt.handlers import TelemetryMessageHandler, CommandAckHandler
-from core.mqtt.client import create_mqtt_client
 
 logger = logging.getLogger(__name__)
 
 
-# We must override the routing to handle both topics,
-# since your original client factory only expected one handler.
+# ==========================================
+# MULTI-TOPIC ROUTER
+# ==========================================
 def routed_on_message(client, userdata, msg):
     topic = msg.topic
     if topic == "plant/telemetry/state":
@@ -24,15 +22,17 @@ def routed_on_message(client, userdata, msg):
 
 def routed_on_connect(client, userdata, flags, rc):
     if rc == 0:
-        print("✅ [DJANGO MQTT] Worker successfully connected to Mosquitto Broker!")
+        print("✅ [DJANGO MQTT] Worker successfully connected to Broker!")
         client.subscribe("plant/telemetry/state", qos=1)
-        # BRUTAL FIX: We must subscribe to the new ACK topic
         client.subscribe("plant/command/ack", qos=1)
         print("✅ [DJANGO MQTT] Subscribed to telemetry and ack topics.")
     else:
         print(f"❌ [DJANGO MQTT] Failed to connect, return code {rc}")
 
 
+# ==========================================
+# DJANGO MANAGEMENT COMMAND
+# ==========================================
 class Command(BaseCommand):
     help = "Runs the MQTT SCADA Listener (Telemetry & Command ACKs)"
 
@@ -43,31 +43,46 @@ class Command(BaseCommand):
         telemetry_handler = TelemetryMessageHandler()
         ack_handler = CommandAckHandler()
 
-        # 2. Use your existing factory, but we will override the routing
-        client = create_mqtt_client(telemetry_handler, ack_handler)
+        # 2. Instantiate Raw Client (Bypasses any hardcoded SSL in factories)
+        client = mqtt.Client()
 
-        # Inject BOTH handlers into the userdata so the router can use them
+        # 3. Inject Handlers into Userdata for the router
         client.user_data_set({
             "telemetry_handler": telemetry_handler,
             "ack_handler": ack_handler
         })
 
-        # Override the callbacks to use our new multi-topic routing
+        # 4. Attach Callbacks
         client.on_message = routed_on_message
         client.on_connect = routed_on_connect
 
+        # 5. Fetch Settings (Defaulting to localhost if missing)
+        broker_host = getattr(settings, 'MQTT_BROKER_HOST', 'localhost')
+        broker_port = getattr(settings, 'MQTT_BROKER_PORT', 1883)
+
+        # 6. The SSL / Localhost Fix
+        if broker_port == 8883:
+            self.stdout.write("🔒 Configuring TLS for secure cloud connection...")
+            client.tls_set()
+            # Apply credentials if they exist for cloud
+            mqtt_user = getattr(settings, 'MQTT_USER', None)
+            mqtt_pass = getattr(settings, 'MQTT_PASS', None)
+            if mqtt_user and mqtt_pass:
+                client.username_pw_set(mqtt_user, mqtt_pass)
+        else:
+            self.stdout.write("🔓 Using plain-text local connection (SSL disabled)...")
+
+        # 7. Connect and Run Blocking Loop
         try:
-            self.stdout.write(
-                f"Connecting to MQTT Broker at {settings.MQTT_BROKER_HOST}:{settings.MQTT_BROKER_PORT}...")
+            self.stdout.write(f"Connecting to MQTT Broker at {broker_host}:{broker_port}...")
 
             client.connect(
-                host=settings.MQTT_BROKER_HOST,
-                port=settings.MQTT_BROKER_PORT,
-                keepalive=settings.MQTT_KEEPALIVE,
+                host=broker_host,
+                port=broker_port,
+                keepalive=getattr(settings, 'MQTT_KEEPALIVE', 60),
             )
 
-            # BRUTAL FIX: No more while True loop.
-            # loop_forever() blocks the main thread and efficiently listens for incoming messages natively.
+            # loop_forever() efficiently blocks the thread and manages reconnects natively
             client.loop_forever()
 
         except KeyboardInterrupt:
