@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy your entire project into the container
 COPY . .
 
+# ADD THIS LINE: Gather all static files
+RUN python manage.py collectstatic --noinput
+
 # Make the start script executable
 RUN chmod +x start.sh
 

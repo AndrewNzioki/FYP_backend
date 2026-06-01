@@ -31,7 +31,7 @@ env/
 
 # IDE
 .vscode/
-.idea/
+../.idea/
 *.swp
 *.swo
 *~
@@ -57,9 +57,9 @@ db.sqlite3
 *.sqlite3
 
 # Environment Variables
-.env
-.env
-.env.production
+digitaltwin_backend/.env
+digitaltwin_backend/.env
+digitaltwin_backend/.env.production
 .env.*.local
 
 # Logs

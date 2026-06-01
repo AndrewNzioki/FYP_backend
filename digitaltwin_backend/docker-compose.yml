@@ -1,0 +1,60 @@
+services:
+  # 1. The Database
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: digitaltwin_dev
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  # 2. The Message Broker (for Celery and Channels)
+  redis:
+    image: redis:6-alpine
+    ports:
+      - "6379:6379"
+
+  # 3. Your Cloud Dashboard (Web Server)
+  app:
+    build: .
+    command: ./start.sh
+    volumes:
+      - .:/app  # This syncs your local code so changes update instantly!
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+
+  # 4. The Background Worker (Celery)
+  worker:
+    build: .
+    command: celery -A digitaltwin_backend worker --loglevel=info --concurrency=1
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - db
+
+  # 5. The MQTT Listener
+  mqtt:
+    build: .
+    command: python manage.py run_mqtt
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+
+# This keeps your database data safe even if you restart the containers
+volumes:
+  postgres_data:

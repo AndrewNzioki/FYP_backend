@@ -65,8 +65,8 @@ class Command(BaseCommand):
             self.stdout.write("🔒 Configuring TLS for secure cloud connection...")
             client.tls_set()
             # Apply credentials if they exist for cloud
-            mqtt_user = getattr(settings, 'MQTT_USER', None)
-            mqtt_pass = getattr(settings, 'MQTT_PASS', None)
+            mqtt_user = getattr(settings, 'MQTT_USERNAME', None)
+            mqtt_pass = getattr(settings, 'MQTT_PASSWORD', None)
             if mqtt_user and mqtt_pass:
                 client.username_pw_set(mqtt_user, mqtt_pass)
         else:
