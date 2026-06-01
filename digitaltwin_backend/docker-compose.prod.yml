@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:15
+    restart: always
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - .env.prod
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+
+  app:
+    build: .
+    # Daphne runs on port 80 for production web traffic
+    command: daphne -b 0.0.0.0 -p 80 rethink_scada.asgi:application
+    restart: always
+    volumes:
+      - .:/app
+    ports:
+      - "80:80"
+    env_file:
+      - .env.prod
+    depends_on:
+      - db
+      - redis
+
+  mqtt_worker:
+    build: .
+    # Runs your custom MQTT listener
+    command: python manage.py run_mqtt
+    restart: always
+    volumes:
+      - .:/app
+    env_file:
+      - .env.prod
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
