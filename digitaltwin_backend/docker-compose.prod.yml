@@ -23,7 +23,6 @@ services:
     depends_on:
       - db
       - redis
-      -
 
   caddy:
     image: caddy:2-alpine
